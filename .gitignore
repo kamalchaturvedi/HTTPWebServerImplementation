@@ -1,0 +1,6 @@
+Debug
+www
+.settings
+.cproject
+.project
+src/WebServer.c
