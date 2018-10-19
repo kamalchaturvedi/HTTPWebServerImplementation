@@ -40,6 +40,72 @@ char fileNotFoundResponse[] =
 				"<body><p>404 Not Found: The requested resource could not be found!</p></body></html>\r\n";
 
 char baseResponse[] = "./www";
+
+void handleClientRequest(int fd_server, char buf[2048], int fd_client,
+		char baseResponse[], int fd_img, extn fileExtensions[],
+		char fileNotFoundResponse[]) {
+	unsigned long requestedfileSize;
+	char *ptr, fileResource[500];
+	close(fd_server);
+	memset(buf, 0, 2048);
+	read(fd_client, buf, 2047);
+	printf("%s\n", buf);
+	ptr = strstr(buf, " HTTP/");
+	if (ptr == NULL) {
+		printf("Not an HTTP request");
+	} else {
+		*ptr = 0;
+		if (strncmp(buf, "GET ", 4) != 0) {
+			printf("Not an HTTP GET request");
+		} else {
+			ptr = buf + 4;
+			if (ptr[strlen(ptr) - 1] == '/') {
+				strcat(ptr, "index.html");
+				strcpy(fileResource, baseResponse);
+				strcat(fileResource, ptr);
+				fd_img = open(fileResource, O_RDONLY);
+				requestedfileSize = fileSize(fileResource);
+				bzero(buf, BUFSIZE);
+				sprintf(buf,
+						"HTTP/1.1 200 Document Follows\r\n Content-Type: %s\r\n Content-Length: %lu\r\n\r\n",
+						"text/html", requestedfileSize);
+				send(fd_client, buf, strlen(buf), 0);
+				sendfile(fd_client, fd_img, NULL, requestedfileSize);
+				close(fd_img);
+			} else {
+				strcpy(fileResource, baseResponse);
+				strcat(fileResource, ptr);
+				printf("%s", fileResource);
+				char* requestItemType = strrchr(ptr, '.');
+				int i;
+				for (i = 0; fileExtensions[i].ext != NULL; i++) {
+					if (strcmp(requestItemType + 1, fileExtensions[i].ext)
+							== 0) {
+						fd_img = open(fileResource, O_RDONLY);
+						if (fd_img == -1) {
+							bzero(buf, BUFSIZE);
+							sprintf(buf, "%s", fileNotFoundResponse);
+							send(fd_client, buf, strlen(buf), 0);
+							break;
+						}
+						requestedfileSize = fileSize(fileResource);
+						bzero(buf, BUFSIZE);
+						sprintf(buf,
+								"HTTP/1.1 200 Document Follows\r\n Content-Type: %s\r\n Content-Length: %lu\r\n\r\n",
+								fileExtensions[i].mediatype, requestedfileSize);
+						send(fd_client, buf, strlen(buf), 0);
+						sendfile(fd_client, fd_img, NULL, requestedfileSize);
+						close(fd_img);
+						break;
+					}
+				}
+			}
+		}
+	}
+	close(fd_client);
+	printf("Closing connection for client \n");
+}
+
 int main(int argc, char **argv) {
 	printf("Hello");
 	struct sockaddr_in server_addr, client_addr;
@@ -48,7 +114,6 @@ int main(int argc, char **argv) {
 	char buf[2048];
 	int opt = 1, portNo, pid;
 	int fd_img;
-	unsigned long requestedfileSize;
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s <port>\n", argv[0]);
 		exit(1);
@@ -76,6 +141,7 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 	while (1) {
+		/* Block till we have an open connection in the queue */
 		fd_client = accept(fd_server, (struct sockaddr *) &client_addr,
 				&client_sock_len);
 		if (fd_client == -1) {
@@ -83,79 +149,24 @@ int main(int argc, char **argv) {
 			continue;
 		}
 		printf("Connected to client ... \n");
-		//pid = fork();
-		pid = 0;
-		if (pid < 0)
+		pid = fork();
+		if (pid < 0) {
 			perror("ERROR on fork");
-		if (pid == 0) {
-			char *ptr, fileResource[500];
-			//close(fd_server);
-			memset(buf, 0, 2048);
-			read(fd_client, buf, 2047);
-			printf("%s\n", buf);
-			ptr = strstr(buf, " HTTP/");
-			if (ptr == NULL) {
-				printf("Not an HTTP request");
-			} else {
-				*ptr = 0;
-				if (strncmp(buf, "GET ", 4) != 0) {
-					printf("Not an HTTP GET request");
-				} else {
-					ptr = buf + 4;
-					if (ptr[strlen(ptr) - 1] == '/') {
-						strcat(ptr, "index.html");
-						strcpy(fileResource, baseResponse);
-						strcat(fileResource, ptr);
-						fd_img = open(fileResource, O_RDONLY);
-						requestedfileSize = fileSize(fileResource);
-						bzero(buf, BUFSIZE);
-						sprintf(buf,
-								"HTTP/1.1 200 Document Follows\r\n Content-Type: %s\r\n Content-Length: %lu\r\n\r\n",
-								"text/html", requestedfileSize);
-						send(fd_client, buf, strlen(buf), 0);
-						sendfile(fd_client, fd_img, NULL, requestedfileSize);
-						close(fd_img);
-					} else {
-						strcpy(fileResource, baseResponse);
-						strcat(fileResource, ptr);
-						printf("%s", fileResource);
-						char* requestItemType = strrchr(ptr, '.');
-						int i;
-						for (i = 0; fileExtensions[i].ext != NULL; i++) {
-							if (strcmp(requestItemType + 1,
-									fileExtensions[i].ext) == 0) {
-								fd_img = open(fileResource, O_RDONLY);
-								if (fd_img == -1) {
-									bzero(buf, BUFSIZE);
-									sprintf(buf,"%s",fileNotFoundResponse);
-									send(fd_client, buf, strlen(buf), 0);
-									break;
-								}
-								requestedfileSize = fileSize(fileResource);
-								bzero(buf, BUFSIZE);
-								sprintf(buf,
-										"HTTP/1.1 200 Document Follows\r\n Content-Type: %s\r\n Content-Length: %lu\r\n\r\n",
-										fileExtensions[i].mediatype,
-										requestedfileSize);
-								send(fd_client, buf, strlen(buf), 0);
-								sendfile(fd_client, fd_img, NULL,
-										requestedfileSize);
-								close(fd_img);
-								break;
-							}
-						}
-					}
-				}
-			}
+			exit(1);
 		}
-		close(fd_client);
-		printf("Closing connection for client \n");
-		//exit(0);
+		if (pid == 0) {
+			handleClientRequest(fd_server, buf, fd_client, baseResponse, fd_img,
+					fileExtensions, fileNotFoundResponse);
+			exit(0);
+		}
+		if (pid > 0) {
+			close(fd_client);
+			waitpid(0, NULL, WNOHANG);
+		}
 	}
-	//close(fd_client);
+	close(fd_server);
+	return 0;
 }
-//return 0;
-//}
 
 unsigned long fileSize(char *fileName) {
 	FILE * f = fopen(fileName, "r");
