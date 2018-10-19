@@ -20,14 +20,26 @@
 #define BUFSIZE 2048
 unsigned long fileSize(char *);
 
-char baseResponse[] =
-		"HTTP/1.0 200 Ok\r\n"
-				"Content-Type: text/html; charset=UTF-8\r\n\r\n"
-				"<!DOCTYPE html>\r\n"
-				"<html><head><title>Your Server Exists</title>\r\n"
-				"<style>body { background-color: blue}</style></head>\r\n"
-				"<script src=\"temp.js\"></script>\r\n"
-				"<body onload=\"howdy();\"><center><h1>Howdy Buff</h1><img src=\"Kamal.jpg\"/></center></body></html>\r\n";
+typedef struct {
+	char *ext;
+	char *mediatype;
+} extn;
+
+extn fileExtensions[] = { { "gif", "image/gif" }, { "txt", "text/plain" }, {
+		"jpg", "image/jpg" }, { "js", "application/javascript" }, { "css",
+		"text/css" }, { "jpeg", "image/jpeg" }, { "png", "image/png" }, { "ico",
+		"image/ico" }, { "zip", "image/zip" }, { "gz", "image/gz" }, { "tar",
+		"image/tar" }, { "htm", "text/html" }, { "html", "text/html" }, { "php",
+		"text/html" }, { "pdf", "application/pdf" }, { "zip",
+		"application/octet-stream" }, { "rar", "application/octet-stream" }, {
+		0, 0 } };
+
+char fileNotFoundResponse[] =
+		"HTTP/1.0 404 Not Found\r\n"
+				"<html><head><title>404 Not Found</head></title>\r\n"
+				"<body><p>404 Not Found: The requested resource could not be found!</p></body></html>\r\n";
+
+char baseResponse[] = "./www";
 int main(int argc, char **argv) {
 	printf("Hello");
 	struct sockaddr_in server_addr, client_addr;
@@ -71,58 +83,79 @@ int main(int argc, char **argv) {
 			continue;
 		}
 		printf("Connected to client ... \n");
-		pid = fork();
+		//pid = fork();
+		pid = 0;
 		if (pid < 0)
 			perror("ERROR on fork");
 		if (pid == 0) {
-			close(fd_server);
+			char *ptr, fileResource[500];
+			//close(fd_server);
 			memset(buf, 0, 2048);
 			read(fd_client, buf, 2047);
 			printf("%s\n", buf);
-			if (!strncmp(buf, "GET /favicon.ico", 16)) {
-				fd_img = open("favicon.ico", O_RDONLY);
-				requestedfileSize = fileSize("favicon.ico");
-				bzero(buf, BUFSIZE);
-				sprintf(buf,
-						"HTTP/1.1 200 Document Follows\r\n Content-Type: %s\r\n Content-Length: %lu\r\n\r\n",
-						"image/ico", requestedfileSize);
-				//HTTP/1.1 200 OK\r\nContent-Type: %s\r\n\r\n
-				send(fd_client, buf, strlen(buf), 0);
-				sendfile(fd_client, fd_img, NULL, requestedfileSize);
-				close(fd_img);
-			} else if (!strncmp(buf, "GET /Kamal.jpg", 14)) {
-				fd_img = open("Kamal.jpg", O_RDONLY);
-				requestedfileSize = fileSize("Kamal.jpg");
-				bzero(buf, BUFSIZE);
-				sprintf(buf,
-						"HTTP/1.1 200 Document Follows\r\n Content-Type: %s\r\n Content-Length: %lu\r\n\r\n",
-						"image/jpg", requestedfileSize);
-				send(fd_client, buf, strlen(buf), 0);
-				sendfile(fd_client, fd_img, NULL, requestedfileSize);
-				close(fd_img);
-			}else if (!strncmp(buf, "GET /temp.js", 12)) {
-				fd_img = open("temp.js", O_RDONLY);
-				requestedfileSize = fileSize("temp.js");
-				bzero(buf, BUFSIZE);
-				sprintf(buf,
-						"HTTP/1.1 200 Document Follows\r\n Content-Type: %s\r\n Content-Length: %lu\r\n\r\n",
-						"application/javascript", requestedfileSize);
-				send(fd_client, buf, strlen(buf), 0);
-				sendfile(fd_client, fd_img, NULL, requestedfileSize);
-				close(fd_img);
+			ptr = strstr(buf, " HTTP/");
+			if (ptr == NULL) {
+				printf("Not an HTTP request");
+			} else {
+				*ptr = 0;
+				if (strncmp(buf, "GET ", 4) != 0) {
+					printf("Not an HTTP GET request");
+				} else {
+					ptr = buf + 4;
+					if (ptr[strlen(ptr) - 1] == '/') {
+						strcat(ptr, "index.html");
+						strcpy(fileResource, baseResponse);
+						strcat(fileResource, ptr);
+						fd_img = open(fileResource, O_RDONLY);
+						requestedfileSize = fileSize(fileResource);
+						bzero(buf, BUFSIZE);
+						sprintf(buf,
+								"HTTP/1.1 200 Document Follows\r\n Content-Type: %s\r\n Content-Length: %lu\r\n\r\n",
+								"text/html", requestedfileSize);
+						send(fd_client, buf, strlen(buf), 0);
+						sendfile(fd_client, fd_img, NULL, requestedfileSize);
+						close(fd_img);
+					} else {
+						strcpy(fileResource, baseResponse);
+						strcat(fileResource, ptr);
+						printf("%s", fileResource);
+						char* requestItemType = strrchr(ptr, '.');
+						int i;
+						for (i = 0; fileExtensions[i].ext != NULL; i++) {
+							if (strcmp(requestItemType + 1,
+									fileExtensions[i].ext) == 0) {
+								fd_img = open(fileResource, O_RDONLY);
+								if (fd_img == -1) {
+									bzero(buf, BUFSIZE);
+									sprintf(buf,"%s",fileNotFoundResponse);
+									send(fd_client, buf, strlen(buf), 0);
+									break;
+								}
+								requestedfileSize = fileSize(fileResource);
+								bzero(buf, BUFSIZE);
+								sprintf(buf,
+										"HTTP/1.1 200 Document Follows\r\n Content-Type: %s\r\n Content-Length: %lu\r\n\r\n",
+										fileExtensions[i].mediatype,
+										requestedfileSize);
+								send(fd_client, buf, strlen(buf), 0);
+								sendfile(fd_client, fd_img, NULL,
+										requestedfileSize);
+								close(fd_img);
+								break;
+							}
+						}
+					}
+				}
 			}
-
-			else
-				write(fd_client, baseResponse, sizeof(baseResponse));
-
-			close(fd_client);
-			printf("Closing connection for client \n");
-			exit(0);
 		}
 		close(fd_client);
+		printf("Closing connection for client \n");
+		//exit(0);
 	}
-	return 0;
+	//close(fd_client);
 }
+//return 0;
+//}
 
 unsigned long fileSize(char *fileName) {
 	FILE * f = fopen(fileName, "r");
