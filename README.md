@@ -1,7 +1,9 @@
 						**HTTP Web Server**
 
-**Author : Kamal Chaturvedi
-Email  : kamalchaturvedi15@gmail.com**
+**Author : Kamal Chaturvedi**
+
+Email  : kamalchaturvedi15@gmail.com
+
 To build the Web Server , open shell and type the following command
 
 > make
