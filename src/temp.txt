@@ -17,6 +17,7 @@
 #include<sys/sendfile.h>
 #include<sys/stat.h>
 #include<fcntl.h>
+#include <errno.h>
 #define BUFSIZE 2048
 unsigned long fileSize(char *);
 
@@ -113,61 +114,66 @@ int main(int argc, char **argv) {
 	int fd_server, fd_client;
 	char buf[2048];
 	int opt = 1, portNo, pid;
-	int fd_img;
+	int fd_img, flags;
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s <port>\n", argv[0]);
 		exit(1);
 	}
 	portNo = atoi(argv[1]);
-	fd_server = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd_server < 0) {
-		perror("Could not establish socket for the server");
-		exit(1);
-	}
+	fd_server = checkError(socket(AF_INET, SOCK_STREAM, 0),
+			"Could not establish socket for the server");
 	setsockopt(fd_server, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int));
+	flags = checkError(fcntl(fd_server, F_GETFL),
+			"Could not get the flags on the TCP socket");
+	checkError(fcntl(fd_server, F_SETFL, flags | O_NONBLOCK),
+			"Could not the TCP socket to be non-blocking");
 	server_addr.sin_family = AF_INET;
 	server_addr.sin_addr.s_addr = INADDR_ANY;
 	server_addr.sin_port = htons(portNo);
-
-	if (bind(fd_server, (struct sockaddr *) &server_addr, sizeof(server_addr))
-			== -1) {
-		perror("Could not bind server\n");
-		close(fd_server);
-		exit(1);
-	}
-	if (listen(fd_server, 10) == -1) {
-		perror("Could not listen to new connections\n");
-		close(fd_server);
-		exit(1);
-	}
+	checkError(
+			bind(fd_server, (struct sockaddr *) &server_addr,
+					sizeof(server_addr)), "Could not bind server\n");
+	checkError(listen(fd_server, 10), "Could not listen to new connections\n");
 	while (1) {
 		/* Block till we have an open connection in the queue */
 		fd_client = accept(fd_server, (struct sockaddr *) &client_addr,
 				&client_sock_len);
 		if (fd_client == -1) {
-			perror("Error accepting connection with client\n");
-			continue;
-		}
-		printf("Connected to client ... \n");
-		pid = fork();
-		if (pid < 0) {
-			perror("ERROR on fork");
-			exit(1);
-		}
-		if (pid == 0) {
-			handleClientRequest(fd_server, buf, fd_client, baseResponse, fd_img,
-					fileExtensions, fileNotFoundResponse);
-			exit(0);
-		}
-		if (pid > 0) {
-			close(fd_client);
-			waitpid(0, NULL, WNOHANG);
+			if (errno == EWOULDBLOCK) {
+				/* If there are no pending connections, this will be called. Sleep for a second and check for a new connection */
+				sleep(1);
+			} else {
+				perror("Error accepting connection with client\n");
+				exit(1);
+			}
+		} else {
+			printf("Connected to client ... \n");
+			pid = fork();
+			if (pid < 0) {
+				perror("ERROR on fork");
+				exit(1);
+			}
+			if (pid == 0) {
+				handleClientRequest(fd_server, buf, fd_client, baseResponse,
+						fd_img, fileExtensions, fileNotFoundResponse);
+				exit(0);
+			}
+			if (pid > 0) {
+				close(fd_client);
+				waitpid(0, NULL, WNOHANG);
+			}
 		}
 	}
 	close(fd_server);
 	return 0;
 }
-
+int checkError(int id, char * errorMessage) {
+	if (id == -1) {
+		perror(errorMessage);
+		exit(1);
+	}
+	return id;
+}
 unsigned long fileSize(char *fileName) {
 	FILE * f = fopen(fileName, "r");
 	fseek(f, 0, SEEK_END);
@@ -175,3 +181,4 @@ unsigned long fileSize(char *fileName) {
 	fclose(f);
 	return length;
 }
+
